@@ -1,0 +1,116 @@
+---
+- hosts: pis
+  vars:
+    hostname_prefix: node
+    locale: en_US.UTF-8
+    timezone: "America/New York"
+    ssh: true
+    keyboard_layout: 
+    username: justin
+    ufw_enabled: true
+    packages:
+      - ufw
+      - unattended-upgrades
+      - neovim
+      - git
+      - fail2ban
+  become: yes
+  tasks:
+    - name: update raspi-config
+      become: true
+      apt:
+        name: raspi-config
+        update_cache: yes
+        state: present
+        cache_valid_time: 3600
+    - name: get hostname
+      shell: "raspi-config nonint get_hostname"
+      register: pi_hostname
+    - name: change hostname
+      shell: "raspi-config nonint do_hostname {{ hostname_prefix }}-{{ groups['pis'].index(inventory_hostname) }}"
+      when: pi_hostname.stdout != "{{ hostname_prefix }}-{{ groups['pis'].index(inventory_hostname) }}"
+    - name: change locale
+      shell: "raspi-config nonint do_change_locale {{ locale }}"
+    - name: change timezone
+      shell: "raspi-config nonint do_change_timezone {{ timezone }}"
+    - name: change keyboard layout
+      debug:
+        msg: "TODO: Change the keyboard layout"
+    - name: check ssh
+      shell: "raspi-config nonint get_ssh"
+      register: ssh_status
+      changed_when: False
+    - name: enable ssh
+      shell: "raspi-config nonint do_ssh 0"
+      when: ssh and (ssh_status.stdout != '1')
+    - name: disable ssh
+      shell: "raspi-config nonint do_ssh 1"
+      when: (not ssh) and (ssh_status.stdout != '0')
+    - name: add the user '{{ name }}' with a bash shell
+      user:
+        name: "{{ username }}"
+        shell: /bin/bash
+        groups: 
+          - adm
+          - sudo
+        append: yes
+    - name: lock the 'pi' user
+      user:
+        name: pi
+        expires: -1
+    - name: change root password
+      debug: 
+        msg: "changing the root password" 
+    - name: install packages
+      apt:
+        name: "{{ item }}"
+        state: latest
+        update_cache: yes
+      loop: "{{ packages }}"
+    - name: download the docker script
+      get_url:
+        url: "https://get.docker.com"
+        dest: /tmp/docker.sh
+    - name: install docker
+      shell: "bash /tmp/docker.sh"
+      become: yes
+      notify:
+        - cleanup docker
+    - name: add {{ username }} to the docker group
+      user:
+        name: "{{ username }}"
+        group: docker
+        append: yes
+    - name: configure unattended upgrades
+      lineinfile:
+        path: /etc/apt/apt.conf.d/50unattended-upgrades
+        line: '"origin={{ item }},codename=${distro_codename},label={{ item }}"'
+        loop:
+          - Raspbian
+          - Raspberry Pi Foundation
+    - name: configure ufw
+      ufw:
+        comment: SSH
+        rule: allow
+        port: 22
+        proto: tcp
+      when: ufw_enabled
+    - name: restrict ssh
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        line: "AllowUsers {{ username }}"
+    - name: protect against brute force
+      blockinfile:
+        path: /etc/fail2ban/jail.local
+        block: |
+          [DEFAULT]
+          bantime = 1h
+          banaction = ufw
+
+          [sshd]
+          enabled = true
+  handlers:
+    - name: cleanup docker
+      file:
+        name: /tmp/docker.sh
+        state: absent
