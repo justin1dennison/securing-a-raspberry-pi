@@ -1,5 +1,10 @@
 ---
 - hosts: pis
+  vars_prompt:
+    - name: password
+      prompt: "Password?"
+    - name: root_password
+      prompt: "Root Password Change?"
   vars:
     hostname_prefix: node
     locale: en_US.UTF-8
@@ -54,13 +59,15 @@
           - adm
           - sudo
         append: yes
+        password: "{{ password  | password_hash('sha512') }}"
     - name: lock the 'pi' user
       user:
         name: pi
         expires: -1
     - name: change root password
-      debug: 
-        msg: "changing the root password" 
+      user:
+        name: root
+        password: "{{ root_password | password_hash('sha512') }}"
     - name: install packages
       apt:
         name: "{{ item }}"
